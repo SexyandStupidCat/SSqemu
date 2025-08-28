@@ -148,6 +148,7 @@
 #include "qapi/error.h"
 #include "fd-trans.h"
 #include "user/cpu_loop.h"
+#include "hijack.h"
 
 #ifndef CLONE_IO
 #define CLONE_IO                0x80000000      /* Clone io context */
@@ -13897,6 +13898,178 @@ static abi_long do_syscall1(CPUArchState *cpu_env, int num, abi_long arg1,
     return ret;
 }
 
+void get_cpu_registers(CPUState *cpu, void *cpu_env, struct syscall_request *request) {
+    // 确定架构并获取寄存器
+#if defined(TARGET_X86_64) || defined(TARGET_I386)
+    // X86/X86_64 架构
+    CPUX86State *env = (CPUX86State *)cpu_env;
+    
+    #ifdef TARGET_X86_64
+        strcpy(request->arch_name, "x86_64");
+    #else
+        strcpy(request->arch_name, "x86");
+    #endif
+    
+    // 获取通用寄存器
+    request->registers[0] = (size_t)env->regs[R_EAX];
+    request->registers[1] = (size_t)env->regs[R_EBX];
+    request->registers[2] = (size_t)env->regs[R_ECX];
+    request->registers[3] = (size_t)env->regs[R_EDX];
+    request->registers[4] = (size_t)env->regs[R_ESI];
+    request->registers[5] = (size_t)env->regs[R_EDI];
+    request->registers[6] = (size_t)env->regs[R_EBP];
+    request->registers[7] = (size_t)env->regs[R_ESP];
+    
+    // 64位特有寄存器
+    #ifdef TARGET_X86_64
+        request->registers[8] = (size_t)env->regs[8];   // R8
+        request->registers[9] = (size_t)env->regs[9];   // R9
+        request->registers[10] = (size_t)env->regs[10]; // R10
+        request->registers[11] = (size_t)env->regs[11]; // R11
+        request->registers[12] = (size_t)env->regs[12]; // R12
+        request->registers[13] = (size_t)env->regs[13]; // R13
+        request->registers[14] = (size_t)env->regs[14]; // R14
+        request->registers[15] = (size_t)env->regs[15]; // R15
+    #endif
+    
+    // 程序计数器
+    request->registers[16] = (size_t)env->eip;
+    
+    // EFLAGS
+    request->registers[17] = (size_t)env->eflags;
+    
+    log_debug("获取到 %s 架构的寄存器状态: RAX=%lx, RBX=%lx, RCX=%lx, RDX=%lx, RSI=%lx, RDI=%lx, RBP=%lx, RSP=%lx, RIP=%lx",
+              request->arch_name,
+              (unsigned long)request->registers[0], 
+              (unsigned long)request->registers[1],
+              (unsigned long)request->registers[2],
+              (unsigned long)request->registers[3],
+              (unsigned long)request->registers[4],
+              (unsigned long)request->registers[5],
+              (unsigned long)request->registers[6],
+              (unsigned long)request->registers[7],
+              (unsigned long)request->registers[16]);
+    
+#elif defined(TARGET_ARM)
+    // ARM 架构
+    CPUARMState *env = (CPUARMState *)cpu_env;
+    strcpy(request->arch_name, "arm");
+    
+    // 获取通用寄存器 (R0-R15)
+    for (int i = 0; i < 16; i++) {
+        request->registers[i] = (size_t)env->regs[i];
+    }
+    // CPSR 寄存器
+    request->registers[16] = (size_t)env->uncached_cpsr;
+    
+    log_debug("获取到 ARM 架构的寄存器状态: R0=%lx, R1=%lx, R2=%lx, R3=%lx, R15(PC)=%lx, CPSR=%lx",
+              (unsigned long)request->registers[0],
+              (unsigned long)request->registers[1],
+              (unsigned long)request->registers[2],
+              (unsigned long)request->registers[3],
+              (unsigned long)request->registers[15],
+              (unsigned long)request->registers[16]);
+    
+#elif defined(TARGET_AARCH64)
+    // ARM64 架构
+    CPUARMState *env = (CPUARMState *)cpu_env;
+    strcpy(request->arch_name, "aarch64");
+    
+    // 获取通用寄存器 (X0-X30)
+    for (int i = 0; i < 31; i++) {
+        request->registers[i] = (size_t)env->xregs[i];
+    }
+    // PC
+    request->registers[31] = (size_t)env->pc;
+    
+    log_debug("获取到 AArch64 架构的寄存器状态: X0=%lx, X1=%lx, X2=%lx, X3=%lx, X30(LR)=%lx, PC=%lx",
+              (unsigned long)request->registers[0],
+              (unsigned long)request->registers[1],
+              (unsigned long)request->registers[2],
+              (unsigned long)request->registers[3],
+              (unsigned long)request->registers[30],
+              (unsigned long)request->registers[31]);
+    
+#elif defined(TARGET_MIPS)
+    // MIPS 架构
+    CPUMIPSState *env = (CPUMIPSState *)cpu_env;
+    strcpy(request->arch_name, "mips");
+    
+    // 获取通用寄存器
+    for (int i = 0; i < 32; i++) {
+        request->registers[i] = (size_t)env->active_tc.gpr[i];
+    }
+    
+    log_debug("获取到 MIPS 架构的寄存器状态: R4=%lx, R5=%lx, R6=%lx, R7=%lx",
+              (unsigned long)request->registers[4],
+              (unsigned long)request->registers[5],
+              (unsigned long)request->registers[6],
+              (unsigned long)request->registers[7]);
+    
+#elif defined(TARGET_RISCV)
+    // RISC-V 架构
+    CPURISCVState *env = (CPURISCVState *)cpu_env;
+    strcpy(request->arch_name, "riscv");
+    
+    // 获取通用寄存器 (x0-x31)
+    for (int i = 0; i < 32; i++) {
+        request->registers[i] = (size_t)env->gpr[i];
+    }
+    
+    log_debug("获取到 RISC-V 架构的寄存器状态: x10(a0)=%lx, x11(a1)=%lx, x12(a2)=%lx, x13(a3)=%lx",
+              (unsigned long)request->registers[10],
+              (unsigned long)request->registers[11],
+              (unsigned long)request->registers[12],
+              (unsigned long)request->registers[13]);
+    
+#else
+    // 其他架构或未知架构
+    strcpy(request->arch_name, "unknown");
+    memset(request->registers, 0, sizeof(request->registers));
+    log_debug("未知或不支持的 CPU 架构");
+#endif
+}
+
+int syscall_judgement(void *cpu_env, int num, abi_long arg1,
+                    abi_long arg2, abi_long arg3, abi_long arg4,
+                    abi_long arg5, abi_long arg6, abi_long arg7,
+                    abi_long arg8, struct syscall_request * sys_req) {
+    // 填充基本信息
+    CPUState *cpu = env_cpu(cpu_env);
+    sys_req->hash = gen_hash();
+    sys_req->arg[0] = (size_t)arg1;
+    sys_req->arg[1] = (size_t)arg2;
+    sys_req->arg[2] = (size_t)arg3;
+    sys_req->arg[3] = (size_t)arg4;
+    sys_req->arg[4] = (size_t)arg5;
+    sys_req->arg[5] = (size_t)arg6;
+    sys_req->arg[6] = (size_t)arg7;
+    sys_req->arg[7] = (size_t)arg8;
+    sys_req->sysall_num = (size_t)num;
+    sys_req->is_need_hijack = -1;
+    sys_req->operation_list = 0;
+    sys_req->operation_list_length = 0;
+    sys_req->have_ret = 0;
+    sys_req->ret = 0;
+    sys_req->pid = (size_t)getpid();
+    sys_req->request_id = 0;
+    /*
+    0 : qemu -> python
+    1 : python -> qemu
+    2 : qemu -> python
+    */
+    // printf("pid %d\n", sys_req->pid);
+    // 初始化寄存器数组和架构名称
+    memset(sys_req->registers, 0, sizeof(sys_req->registers));
+    memset(sys_req->arch_name, 0, sizeof(sys_req->arch_name));
+    // 获取并填充寄存器信息
+    get_cpu_registers(cpu, cpu_env, sys_req);
+    send_data(sys_req);
+    recv_data(sys_req);
+    if (sys_req->is_need_hijack > 0) return 1;
+    return 0;
+}
+
 abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
                     abi_long arg5, abi_long arg6, abi_long arg7,
@@ -13904,7 +14077,6 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
 {
     CPUState *cpu = env_cpu(cpu_env);
     abi_long ret;
-
 #ifdef DEBUG_ERESTARTSYS
     /* Debug-only code for exercising the syscall-restart code paths
      * in the per-architecture cpu main loops: restart every syscall
@@ -13918,7 +14090,12 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
         }
     }
 #endif
-
+    if (now_pid == 0) {
+        init_logger();
+        log_debug("[do_syscall] new pid, create socket");
+        update_pid();
+        srand(time(NULL));
+    }
     record_syscall_start(cpu, num, arg1,
                          arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 
@@ -13926,14 +14103,43 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
         print_syscall(cpu_env, num, arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
-    ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
+    struct syscall_request * sys_req = (struct syscall_request *)malloc(sizeof(struct syscall_request));
+    // ready to handle syscall, stupid way to prevent race.
+    lock_list();
+    if (syscall_judgement(cpu, num, arg1,
+                         arg2, arg3, arg4, arg5, arg6, arg7, arg8, sys_req)) {
+        ret = (abi_long)sys_req->ret;
+    }
+    else{
+        if (num == TARGET_NR_exit) {
+            log_debug("[do_syscall] fork, create socket");
+            clean_socket();
+        }
+        ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
                       arg5, arg6, arg7, arg8);
+    }
 
     if (unlikely(qemu_loglevel_mask(LOG_STRACE))) {
         print_syscall_ret(cpu_env, num, ret, arg1, arg2,
                           arg3, arg4, arg5, arg6);
     }
-
     record_syscall_return(cpu, num, ret);
+
+    if (num == TARGET_NR_fork || num == TARGET_NR_vfork) {
+        log_debug("[do_syscall] fork, create socket");
+        update_pid();
+    }
+
+
+
+    sys_req->have_ret = 1;
+    sys_req->ret = ret;
+    send_data(sys_req);
+    free(sys_req);
+    sys_req = 0;
+    // handle finish
+    unlock_list();
+    
+
     return ret;
 }
