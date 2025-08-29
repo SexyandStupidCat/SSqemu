@@ -34,7 +34,7 @@ size_t gen_hash(void);
 // void get_cpu_registers(CPUState *cpu, void *cpu_env, struct syscall_request *request);
 void update_pid(void);
 void clean_socket(void);
-void send_data(struct syscall_request * data);
+void send_data(struct syscall_request * data, int current_id);
 void recv_data(struct syscall_request * ans);
 
 #endif /* MY_SYSCALLS_H */

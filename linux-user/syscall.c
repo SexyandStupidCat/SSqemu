@@ -14064,7 +14064,7 @@ int syscall_judgement(void *cpu_env, int num, abi_long arg1,
     memset(sys_req->arch_name, 0, sizeof(sys_req->arch_name));
     // 获取并填充寄存器信息
     get_cpu_registers(cpu, cpu_env, sys_req);
-    send_data(sys_req);
+    send_data(sys_req, 0);
     recv_data(sys_req);
     if (sys_req->is_need_hijack > 0) return 1;
     return 0;
@@ -14134,7 +14134,8 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
 
     sys_req->have_ret = 1;
     sys_req->ret = ret;
-    send_data(sys_req);
+    send_data(sys_req, 1);
+    recv_data(sys_req);
     free(sys_req);
     sys_req = 0;
     // handle finish

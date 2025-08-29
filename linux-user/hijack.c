@@ -120,7 +120,8 @@ void update_pid(void) {
 }
 
 
-void send_data(struct syscall_request * data) {
+void send_data(struct syscall_request * data, int current_id) {
+    data->request_id = 1;
     if (send(handler_fd, data, sizeof(struct syscall_request), 0) == -1) {
         log_debug("[send_data] send failed.");
         close(qemu_fd);
