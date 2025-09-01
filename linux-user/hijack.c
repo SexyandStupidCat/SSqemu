@@ -78,7 +78,7 @@ void update_pid(void) {
     if (socket_path == NULL)
         socket_path = (char*)malloc(0x100);
     snprintf(socket_path, 0x80, "./socket_dir/SFE_%d.socket\x00", (int)now_pid);
-
+    log_debug("[update_pid] new pid is %llx", now_pid);
     struct sockaddr_un server_addr, client_addr;
     socklen_t client_len;
 
@@ -121,8 +121,9 @@ void update_pid(void) {
 
 
 void send_data(struct syscall_request * data, int current_id) {
-    data->request_id = 1;
-    if (send(handler_fd, data, sizeof(struct syscall_request), 0) == -1) {
+    data->request_id = current_id;
+    log_debug("[send_data] send syscall 0x%llx, is_need_hijack is 0x%llx", data->sysall_num, data->is_need_hijack);
+    if (write(handler_fd, data, sizeof(struct syscall_request)) == -1) {
         log_debug("[send_data] send failed.");
         close(qemu_fd);
         close(handler_fd);
@@ -132,7 +133,8 @@ void send_data(struct syscall_request * data, int current_id) {
 }
 
 void recv_data(struct syscall_request * ans) {
-    size_t recv_cnt = recv(handler_fd, ans, sizeof(struct syscall_request), 0);
+    size_t recv_cnt = read(handler_fd, ans, sizeof(struct syscall_request));
+    log_debug("[recv_data] recv syscall 0x%llx, is_need_hijack is 0x%llx", ans->sysall_num, ans->is_need_hijack);
     if (recv_cnt <= 0) {
         log_debug("[recv_data] recv failed.");
         close(qemu_fd);

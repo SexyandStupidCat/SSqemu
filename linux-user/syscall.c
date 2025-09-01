@@ -14030,12 +14030,13 @@ void get_cpu_registers(CPUState *cpu, void *cpu_env, struct syscall_request *req
 #endif
 }
 
-int syscall_judgement(void *cpu_env, int num, abi_long arg1,
+
+int syscall_judgement(CPUArchState *cpu_env, CPUState *cpu, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
                     abi_long arg5, abi_long arg6, abi_long arg7,
                     abi_long arg8, struct syscall_request * sys_req) {
     // 填充基本信息
-    CPUState *cpu = env_cpu(cpu_env);
+    // CPUState *cpu = env_cpu(cpu_env);
     sys_req->hash = gen_hash();
     sys_req->arg[0] = (size_t)arg1;
     sys_req->arg[1] = (size_t)arg2;
@@ -14064,8 +14065,13 @@ int syscall_judgement(void *cpu_env, int num, abi_long arg1,
     memset(sys_req->arch_name, 0, sizeof(sys_req->arch_name));
     // 获取并填充寄存器信息
     get_cpu_registers(cpu, cpu_env, sys_req);
+    log_debug("[do_syscall] arg1 0x%llx", sys_req->arg[1]);
+    log_debug("[do_syscall] reg1 0x%llx", sys_req->registers[1]);
     send_data(sys_req, 0);
     recv_data(sys_req);
+    log_debug("[do_syscall] syscall %llx need hijack %llx", sys_req->sysall_num, sys_req->is_need_hijack);
+    log_debug("[do_syscall] sizeof struct 0x%llx", sizeof(struct syscall_request));
+
     if (sys_req->is_need_hijack > 0) return 1;
     return 0;
 }
@@ -14106,15 +14112,17 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
     struct syscall_request * sys_req = (struct syscall_request *)malloc(sizeof(struct syscall_request));
     // ready to handle syscall, stupid way to prevent race.
     lock_list();
-    if (syscall_judgement(cpu, num, arg1,
+    if (syscall_judgement(cpu_env, cpu, num, arg1,
                          arg2, arg3, arg4, arg5, arg6, arg7, arg8, sys_req)) {
+        log_debug("[do_syscall] do fake syscall");
         ret = (abi_long)sys_req->ret;
     }
     else{
-        if (num == TARGET_NR_exit) {
-            log_debug("[do_syscall] fork, create socket");
+        if (num == TARGET_NR_exit || num == TARGET_NR_exit_group) {
+            log_debug("[do_syscall] pid %d : exit", getpid());
             clean_socket();
         }
+        log_debug("[do_syscall] do real syscall");
         ret = do_syscall1(cpu_env, num, arg1, arg2, arg3, arg4,
                       arg5, arg6, arg7, arg8);
     }
@@ -14125,8 +14133,8 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
     }
     record_syscall_return(cpu, num, ret);
 
-    if (num == TARGET_NR_fork || num == TARGET_NR_vfork) {
-        log_debug("[do_syscall] fork, create socket");
+    if ( (num == TARGET_NR_fork || num == TARGET_NR_vfork) && ret == 0) {
+        log_debug("[do_syscall] pid %d : fork, create socket", getpid());
         update_pid();
     }
 
