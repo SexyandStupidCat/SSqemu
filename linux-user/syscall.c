@@ -14029,7 +14029,74 @@ void get_cpu_registers(CPUState *cpu, void *cpu_env, struct syscall_request *req
     log_debug("未知或不支持的 CPU 架构");
 #endif
 }
+void handle_ask_socket(CPUState *cpu) {
+    int ask_fd = -1;
+    int ask_client_fd = -1;
+    struct sockaddr_un ask_addr, ask_client_addr;
+    socklen_t ask_client_len;
+    char ask_socket_path[0x100];
 
+    snprintf(ask_socket_path, sizeof(ask_socket_path), "./socket_dir/ASK_%d.socket", (int)now_pid);
+
+    // 创建 socket
+    ask_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (ask_fd == -1) {
+        log_debug("[ASK_SOCKET] socket error: %s", strerror(errno));
+    } else {
+        memset(&ask_addr, 0, sizeof(ask_addr));
+        ask_addr.sun_family = AF_UNIX;
+        strncpy(ask_addr.sun_path, ask_socket_path, sizeof(ask_addr.sun_path) - 1);
+
+        unlink(ask_socket_path);
+
+        struct stat st = {0};
+        if (stat("./socket_dir", &st) == -1) {
+            mkdir("./socket_dir", 0700);
+        }
+
+        if (bind(ask_fd, (struct sockaddr*)&ask_addr, sizeof(ask_addr)) != -1) {
+            if (listen(ask_fd, 5) != -1) {
+                ask_client_len = sizeof(ask_client_addr);
+                ask_client_fd = accept(ask_fd, (struct sockaddr*)&ask_client_addr, &ask_client_len);
+                if (ask_client_fd != -1) {
+                    // 循环处理请求
+                    int keep_running = 1;
+                    while (keep_running) {
+                        struct g2h_request req;
+                        ssize_t r = read(ask_client_fd, &req, sizeof(req));
+                        if (r <= 0) {
+                            log_debug("[ASK_SOCKET] recv error or closed");
+                            break;
+                        }
+
+                        if (req.addr == 0) {
+                            log_debug("[ASK_SOCKET] got exit request");
+                            unlink(ask_socket_path);
+                            keep_running = 0;
+                        } else {
+                            void *host_addr = g2h(cpu, req.addr);
+                            log_debug("[ASK_SOCKET] guest addr 0x%llx -> host %p", req.addr, host_addr);
+
+                            if (write(ask_client_fd, &host_addr, sizeof(host_addr)) == -1) {
+                                log_debug("[ASK_SOCKET] send host addr failed: %s", strerror(errno));
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    log_debug("[ASK_SOCKET] accept error: %s", strerror(errno));
+                }
+            } else {
+                log_debug("[ASK_SOCKET] listen error: %s", strerror(errno));
+            }
+        } else {
+            log_debug("[ASK_SOCKET] bind error: %s", strerror(errno));
+        }
+    }
+
+    if (ask_client_fd != -1) close(ask_client_fd);
+    if (ask_fd != -1) close(ask_fd);
+}
 
 int syscall_judgement(CPUArchState *cpu_env, CPUState *cpu, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
@@ -14068,13 +14135,17 @@ int syscall_judgement(CPUArchState *cpu_env, CPUState *cpu, int num, abi_long ar
     log_debug("[do_syscall] arg1 0x%llx", sys_req->arg[1]);
     log_debug("[do_syscall] reg1 0x%llx", sys_req->registers[1]);
     send_data(sys_req, 0);
+    // struct syscall_request * sys_req_bak = (struct syscall_request *)malloc(sizeof(struct syscall_request));
+    handle_ask_socket(cpu);
     recv_data(sys_req);
+
     log_debug("[do_syscall] syscall %llx need hijack %llx", sys_req->sysall_num, sys_req->is_need_hijack);
-    log_debug("[do_syscall] sizeof struct 0x%llx", sizeof(struct syscall_request));
 
     if (sys_req->is_need_hijack > 0) return 1;
     return 0;
 }
+
+
 
 abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
@@ -14143,6 +14214,7 @@ abi_long do_syscall(CPUArchState *cpu_env, int num, abi_long arg1,
     sys_req->have_ret = 1;
     sys_req->ret = ret;
     send_data(sys_req, 1);
+    handle_ask_socket(cpu);
     recv_data(sys_req);
     free(sys_req);
     sys_req = 0;

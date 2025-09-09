@@ -17,6 +17,10 @@ struct syscall_request {
     char arch_name[16];       // 架构名称 (x86, arm, etc.)
 };
 
+struct g2h_request {
+    size_t addr;
+};
+
 extern FILE *ss_log_file;
 extern pthread_mutex_t ss_mutex;
 extern char * socket_path;

@@ -69,9 +69,6 @@ size_t gen_hash(void) {
 }
 
 
-
-
-
 void update_pid(void) {
     now_pid = getpid();
     // free(socket_path);
